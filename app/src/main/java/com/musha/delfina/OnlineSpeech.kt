@@ -9,10 +9,11 @@ import java.net.URL
  * does not support this endpoint or the request failed; callers should use local TTS.
  */
 internal object OnlineSpeech {
-    fun synthesize(chatEndpoint: String, apiKey: String, text: String): ByteArray? {
-        val speechEndpoint = chatEndpoint.substringBefore("?")
+    fun synthesize(chatEndpoint: String, configuredSpeechEndpoint: String, apiKey: String, text: String): ByteArray? {
+        val derivedEndpoint = chatEndpoint.substringBefore("?")
             .replace(Regex("/chat/completions/?$"), "/audio/speech")
-        if (speechEndpoint == chatEndpoint.substringBefore("?")) return null
+        val speechEndpoint = configuredSpeechEndpoint.ifBlank { derivedEndpoint }
+        if (speechEndpoint.isBlank() || (configuredSpeechEndpoint.isBlank() && derivedEndpoint == chatEndpoint.substringBefore("?"))) return null
 
         return try {
             val connection = (URL(speechEndpoint).openConnection() as HttpURLConnection).apply {
