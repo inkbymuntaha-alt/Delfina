@@ -109,9 +109,7 @@ internal class RealtimeVoiceClient(
         PeerConnectionFactory.initialize(
             PeerConnectionFactory.InitializationOptions.builder(context.applicationContext).createInitializationOptions()
         )
-        factory = PeerConnectionFactory.builder()
-            .setAudioDeviceModule(JavaAudioDeviceModule.builder(context.applicationContext).createAudioDeviceModule())
-            .createPeerConnectionFactory()
+        factory = PeerConnectionFactory.builder().createPeerConnectionFactory()
     }
 
     private fun attachDataChannel(dataChannel: DataChannel) {
