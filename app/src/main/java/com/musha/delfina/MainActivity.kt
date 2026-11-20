@@ -3,12 +3,15 @@ package com.musha.delfina
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.MediaPlayer
+import java.io.File
 import android.os.Bundle
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.Voice
 import androidx.activity.ComponentActivity
+import androidx.lifecycle.lifecycleScope
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -41,6 +44,7 @@ import java.util.Locale
 class MainActivity : ComponentActivity() {
     private var tts: TextToSpeech? = null
     private var ttsReady = false
+    private var activePlayer: MediaPlayer? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -52,10 +56,39 @@ class MainActivity : ComponentActivity() {
                 tts?.language = Locale.forLanguageTag("en-IN")
             }
         }
-        setContent { MaterialTheme { DelfinaScreen(onSpeak = { speak(it) }) } }
+        setContent { MaterialTheme { DelfinaScreen(onSpeak = { text, endpoint, key -> speak(text, endpoint, key) }) } }
     }
 
-    private fun speak(text: String) {
+    private fun speak(text: String, chatEndpoint: String, apiKey: String) {
+        if (text.isBlank()) return
+        lifecycleScope.launch {
+            val audio = if (chatEndpoint.isNotBlank() && apiKey.isNotBlank()) {
+                withContext(Dispatchers.IO) { OnlineSpeech.synthesize(chatEndpoint, apiKey, text) }
+            } else null
+            if (audio != null) {
+                tts?.stop()
+                activePlayer?.release()
+                val audioFile = File(cacheDir, "delfina_reply.mp3")
+                audioFile.writeBytes(audio)
+                val player = MediaPlayer()
+                activePlayer = player
+                player.setDataSource(audioFile.absolutePath)
+                player.setOnPreparedListener { it.start() }
+                player.setOnCompletionListener { it.release(); if (activePlayer === it) activePlayer = null }
+                player.setOnErrorListener { mp, _, _ ->
+                    mp.release()
+                    if (activePlayer === mp) activePlayer = null
+                    speakLocal(text)
+                    true
+                }
+                player.prepareAsync()
+            } else {
+                speakLocal(text)
+            }
+        }
+    }
+
+    private fun speakLocal(text: String) {
         val engine = tts ?: return
         if (!ttsReady || text.isBlank()) return
         val locale = localeForText(text)
@@ -73,6 +106,8 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        activePlayer?.release()
+        activePlayer = null
         tts?.stop()
         tts?.shutdown()
         super.onDestroy()
@@ -109,7 +144,7 @@ private data class ChatMessage(val text: String, val fromUser: Boolean)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DelfinaScreen(onSpeak: (String) -> Unit) {
+private fun DelfinaScreen(onSpeak: (String, String, String) -> Unit) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("delfina", ComponentActivity.MODE_PRIVATE) }
     var endpoint by remember { mutableStateOf(prefs.getString("endpoint", "") ?: "") }
@@ -144,7 +179,7 @@ private fun DelfinaScreen(onSpeak: (String) -> Unit) {
             val reply = onlineReply ?: offlineReply(prompt)
             messages.add(ChatMessage(reply, false))
             status = if (onlineReply != null) "Online AI · language-matched voice" else "Offline fallback · language-matched system voice"
-            onSpeak(reply)
+            onSpeak(reply, endpoint.trim(), apiKey.trim())
             busy = false
         }
     }
@@ -204,7 +239,7 @@ private fun DelfinaScreen(onSpeak: (String) -> Unit) {
             title = { Text("Online brain settings") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Optional OpenAI-compatible chat-completions API. Leave blank to use offline fallback.")
+                    Text("Chat endpoint powers online answers. If it supports OpenAI audio/speech, Delfina also tries a natural neural voice (Shimmer); otherwise she automatically uses your phone voice offline.")
                     OutlinedTextField(endpoint, { endpoint = it }, label = { Text("API endpoint URL") }, singleLine = true)
                     OutlinedTextField(model, { model = it }, label = { Text("Model") }, singleLine = true)
                     OutlinedTextField(apiKey, { apiKey = it }, label = { Text("API key") }, singleLine = true)
