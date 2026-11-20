@@ -33,3 +33,18 @@ For the best available voice, open Android **Settings → General management / L
 3. Add a foreground microphone service, wake-word pipeline, and speaker enrollment with Android-version-specific permissions.
 4. Add streaming responses and incremental speech playback.
 5. Test battery, thermal behavior, latency, and screen-off operation on real devices.
+
+
+## Online and offline speech
+
+Delfina now tries OpenAI-compatible neural speech when the configured chat endpoint ends in
+`/chat/completions`. It derives the matching `/audio/speech` endpoint and requests the
+`gpt-4o-mini-tts` model with the `shimmer` voice and warm, feminine delivery instructions.
+The same API key is reused. Providers that do not expose this speech endpoint, or requests
+that fail, automatically fall back to Android TextToSpeech. That local voice can work offline
+when the required language voice is installed on the phone.
+
+Online neural speech requires internet access, a compatible provider, and an API plan/key that
+permits speech generation; it may incur provider charges. The local fallback is not the same
+quality as neural speech. Voice availability and language pronunciation vary by provider and
+installed Android voices.
