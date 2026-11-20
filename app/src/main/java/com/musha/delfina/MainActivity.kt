@@ -256,6 +256,9 @@ private fun DelfinaScreen(onSpeak: (String, String, String, String) -> Unit) {
                         try { context.startActivity(Intent(Settings.ACTION_TTS_SETTINGS)) }
                         catch (_: Exception) { context.startActivity(Intent(Settings.ACTION_SETTINGS)) }
                     }) { Text("Configure offline voice engine") }
+                    TextButton(onClick = {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://k2-fsa.github.io/sherpa/onnx/tts/apk-engine.html")))
+                    }) { Text("Get offline neural voice models") }
                 }
             },
             confirmButton = {
