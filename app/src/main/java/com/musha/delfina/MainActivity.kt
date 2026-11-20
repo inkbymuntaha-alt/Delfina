@@ -147,6 +147,7 @@ private fun localeForText(text: String): Locale {
 }
 
 private data class ChatMessage(val text: String, val fromUser: Boolean)
+private data class OnlineResult(val reply: String?, val error: String? = null)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -180,12 +181,13 @@ private fun DelfinaScreen(onSpeak: (String, String, String, String) -> Unit) {
         input = ""
         busy = true
         scope.launch {
-            val onlineReply = if (endpoint.isNotBlank() && apiKey.isNotBlank()) {
+            val onlineResult = if (endpoint.isNotBlank() && apiKey.isNotBlank()) {
                 withContext(Dispatchers.IO) { requestOnline(endpoint, model, apiKey, messages.dropLast(1).takeLast(12), prompt) }
-            } else null
+            } else OnlineResult(null, "Add your API endpoint and API key in Settings, then Save.")
+            val onlineReply = onlineResult.reply
             val reply = onlineReply ?: offlineReply(prompt)
             messages.add(ChatMessage(reply, false))
-            status = if (onlineReply != null) "Online AI · language-matched voice" else "Offline fallback · language-matched system voice"
+            status = if (onlineReply != null) "Online AI · language-matched voice" else "Online failed: ${onlineResult.error ?: "unknown error"} · offline fallback"
             onSpeak(reply, endpoint.trim(), speechEndpoint.trim(), apiKey.trim())
             busy = false
         }
@@ -293,7 +295,7 @@ private fun requestOnline(
     key: String,
     history: List<ChatMessage>,
     prompt: String
-): String? {
+): OnlineResult {
     return try {
         val url = URL(endpoint)
         val connection = (url.openConnection() as HttpURLConnection).apply {
@@ -315,9 +317,17 @@ private fun requestOnline(
         val stream = if (code in 200..299) connection.inputStream else connection.errorStream
         val response = stream.bufferedReader().use { it.readText() }
         connection.disconnect()
-        if (code !in 200..299) null else JSONObject(response).getJSONArray("choices")
-            .getJSONObject(0).getJSONObject("message").getString("content").trim().takeIf { it.isNotBlank() }
-    } catch (_: Exception) { null }
+        if (code !in 200..299) {
+            OnlineResult(null, "HTTP $code: ${response.take(180)}")
+        } else {
+            val answer = JSONObject(response).getJSONArray("choices")
+                .getJSONObject(0).getJSONObject("message").getString("content").trim()
+            if (answer.isBlank()) OnlineResult(null, "The API returned an empty answer.")
+            else OnlineResult(answer)
+        }
+    } catch (e: Exception) {
+        OnlineResult(null, (e.message ?: e.javaClass.simpleName).take(180))
+    }
 }
 
 private fun offlineReply(text: String): String {
