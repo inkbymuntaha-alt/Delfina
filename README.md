@@ -67,3 +67,39 @@ Online neural speech requires internet access, a compatible provider, and an API
 permits speech generation; it may incur provider charges. The offline neural engine and voice
 must be installed once and need no network for synthesis. If no neural engine is installed,
 Delfina falls back to the phone's built-in TTS voice.
+
+## Realtime backend deployment
+
+The repository includes a Vercel serverless endpoint at `/api/realtime-token`.
+It creates short-lived OpenAI Realtime client secrets; it does not expose the permanent
+OpenAI API key to the Android app. The Android Realtime/WebRTC client is a separate
+integration step and is not yet complete.
+
+### One-time setup
+
+1. Create a free personal Vercel account at https://vercel.com and import
+   `inkbymuntaha-alt/Delfina` as a project. Keep the project root at the repository root.
+2. In Vercel → Project → Settings → Environment Variables, add:
+   - `OPENAI_API_KEY`: your OpenAI **API** key (never put it in a Git commit or chat).
+   - `DELFINA_ACCESS_CODE`: a long, randomly generated private code. Keep it secret.
+   - Optional: `OPENAI_REALTIME_MODEL`: set to a Realtime model enabled for your API account.
+   Apply these variables to Production, then redeploy once.
+3. In Vercel → Project → Settings → General, copy the Project ID. Find the Team/Account ID
+   under Vercel account settings. Create a Vercel access token in Account Settings → Tokens.
+4. In GitHub → this repository → Settings → Secrets and variables → Actions, add these
+   repository secrets:
+   - `VERCEL_TOKEN`
+   - `VERCEL_ORG_ID`
+   - `VERCEL_PROJECT_ID`
+5. Run **Actions → Deploy Delfina Realtime Backend → Run workflow**. Future changes to
+   `api/**` or `vercel.json` on `main` deploy automatically.
+
+After deployment, the endpoint URL is
+`https://YOUR-VERCEL-PROJECT.vercel.app/api/realtime-token`.
+The Android app must send a POST request with
+`Authorization: Bearer YOUR_DELFINA_ACCESS_CODE` to obtain a short-lived client secret.
+Do not share the OpenAI API key or the access code in screenshots, issues, or chat.
+
+Vercel Hobby is free for personal, non-commercial projects and has usage limits. OpenAI
+Realtime usage is billed separately by OpenAI; this backend does not make API usage free.
+The access code is a basic private gate, not full user authentication; rotate it if exposed.
