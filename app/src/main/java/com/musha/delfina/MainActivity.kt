@@ -253,7 +253,7 @@ private fun DelfinaScreen(onSpeak: (String, String, String, String) -> Unit) {
                     OutlinedTextField(apiKey, { apiKey = it }, label = { Text("API key") }, singleLine = true)
                     TextButton(onClick = {
                         try { context.startActivity(Intent("com.android.settings.TTS_SETTINGS")) }
-                        catch (_: Exception) { context.startActivity(Intent(Settings.ACTION_SETTINGS)) }
+                        catch (_: Exception) { context.startActivity(Intent("android.settings.SETTINGS")) }
                     }) { Text("Configure offline voice engine") }
                     TextButton(onClick = {
                         context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://k2-fsa.github.io/sherpa/onnx/tts/apk-engine.html")))
