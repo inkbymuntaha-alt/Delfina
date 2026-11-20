@@ -6,7 +6,6 @@ import android.content.pm.PackageManager
 import android.media.MediaPlayer
 import java.io.File
 import android.os.Bundle
-import android.provider.Settings
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
@@ -253,7 +252,7 @@ private fun DelfinaScreen(onSpeak: (String, String, String, String) -> Unit) {
                     OutlinedTextField(speechEndpoint, { speechEndpoint = it }, label = { Text("Speech endpoint (optional)") }, singleLine = true)
                     OutlinedTextField(apiKey, { apiKey = it }, label = { Text("API key") }, singleLine = true)
                     TextButton(onClick = {
-                        try { context.startActivity(Intent(Settings.ACTION_TTS_SETTINGS)) }
+                        try { context.startActivity(Intent("com.android.settings.TTS_SETTINGS")) }
                         catch (_: Exception) { context.startActivity(Intent(Settings.ACTION_SETTINGS)) }
                     }) { Text("Configure offline voice engine") }
                     TextButton(onClick = {
