@@ -37,14 +37,33 @@ For the best available voice, open Android **Settings → General management / L
 
 ## Online and offline speech
 
-Delfina now tries OpenAI-compatible neural speech when the configured chat endpoint ends in
-`/chat/completions`. It derives the matching `/audio/speech` endpoint and requests the
-`gpt-4o-mini-tts` model with the `shimmer` voice and warm, feminine delivery instructions.
-The same API key is reused. Providers that do not expose this speech endpoint, or requests
-that fail, automatically fall back to Android TextToSpeech. That local voice can work offline
-when the required language voice is installed on the phone.
+Delfina supports an optional online neural speech service and an offline Android TTS engine.
+For online speech, set a compatible chat-completions URL and API key. If that URL ends in
+`/chat/completions`, Delfina derives the matching `/audio/speech` URL; alternatively, enter
+a separate Speech endpoint in Settings. It requests `gpt-4o-mini-tts` with the `shimmer`
+voice and warm, feminine delivery instructions. The same API key is reused. Failed or
+unsupported online speech automatically falls back to the currently selected Android TTS engine.
+
+### Better offline neural voice (optional)
+
+Delfina uses Android's standard TextToSpeech API for its offline route. To replace the stock
+phone voice with an on-device neural voice, install a compatible Android TTS engine such as
+the official sherpa-onnx TTS Engine APK, then install/select a voice model in that engine.
+Open Delfina → Settings → Configure offline voice engine and choose the installed engine as
+the system preferred engine. Because Android routes TextToSpeech through the selected engine,
+Delfina will use that neural voice when the network is unavailable.
+
+Official engine/model downloads and supported models:
+https://k2-fsa.github.io/sherpa/onnx/tts/apk-engine.html
+
+Choose an English female voice model in the catalog for the closest match to the online
+Shimmer persona. For Hindi, the sherpa-onnx catalog lists a Hindi Supertonic-3 engine build;
+check the model's available speakers and license before selecting it. Models have different
+licenses, sizes, voices and language coverage; check each model's license before commercial
+distribution. The online Shimmer voice and any separately trained offline voice are not
+literally the same recording/timbre, but both are configured for a warm feminine style.
 
 Online neural speech requires internet access, a compatible provider, and an API plan/key that
-permits speech generation; it may incur provider charges. The local fallback is not the same
-quality as neural speech. Voice availability and language pronunciation vary by provider and
-installed Android voices.
+permits speech generation; it may incur provider charges. The offline neural engine and voice
+must be installed once and need no network for synthesis. If no neural engine is installed,
+Delfina falls back to the phone's built-in TTS voice.
