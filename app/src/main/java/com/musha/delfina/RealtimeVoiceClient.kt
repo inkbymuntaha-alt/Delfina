@@ -14,6 +14,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.delay
 
 /**
  * Direct Android WebRTC connection to OpenAI Realtime.
@@ -159,39 +160,8 @@ internal class RealtimeVoiceClient(
         }
 
     private suspend fun awaitIceGathering() = withTimeout(15000) {
-        if (peer?.iceGatheringState() == PeerConnection.IceGatheringState.COMPLETE) return@withTimeout
-        suspendCancellableCoroutine<Unit> { continuation ->
-            val target = peer ?: run {
-                continuation.resumeWithException(IllegalStateException("Peer connection closed"))
-                return@suspendCancellableCoroutine
-            }
-            val observer = object : PeerConnection.Observer {
-                override fun onSignalingChange(state: PeerConnection.SignalingState) {}
-                override fun onIceConnectionChange(state: PeerConnection.IceConnectionState) {}
-                override fun onIceConnectionReceivingChange(receiving: Boolean) {}
-                override fun onIceGatheringChange(state: PeerConnection.IceGatheringState) {
-                    if (state == PeerConnection.IceGatheringState.COMPLETE && continuation.isActive) {
-                        continuation.resume(Unit)
-                    }
-                }
-                override fun onIceCandidate(candidate: IceCandidate) {}
-                override fun onIceCandidatesRemoved(candidates: Array<IceCandidate>) {}
-                override fun onAddStream(stream: MediaStream) {}
-                override fun onRemoveStream(stream: MediaStream) {}
-                override fun onDataChannel(dataChannel: DataChannel) {}
-                override fun onRenegotiationNeeded() {}
-                override fun onAddTrack(receiver: RtpReceiver, mediaStreams: Array<MediaStream>) {}
-            }
-            // ICE gathering is also polled because the primary observer owns the peer lifecycle.
-            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15)
-            while (continuation.isActive && System.nanoTime() < deadline) {
-                if (target.iceGatheringState() == PeerConnection.IceGatheringState.COMPLETE) {
-                    continuation.resume(Unit)
-                    break
-                }
-                Thread.sleep(100)
-            }
-            if (continuation.isActive) continuation.resumeWithException(IllegalStateException("ICE gathering timed out"))
+        while (peer?.iceGatheringState() != PeerConnection.IceGatheringState.COMPLETE) {
+            delay(100)
         }
     }
 
