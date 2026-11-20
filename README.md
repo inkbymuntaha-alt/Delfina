@@ -22,6 +22,10 @@ When the endpoint is not configured or a network request fails, Delfina uses its
 
 **Important:** this initial milestone does not yet include an embedded local large language model, custom wake-word detection, speaker verification, or guaranteed always-on background listening. Those require separately integrated and tested model runtimes and licensed model files. The app does not claim those features yet.
 
+## Voice setup
+
+For the best available voice, open Android **Settings → General management / Language and input → Text-to-speech output** (the path varies by phone). Select a high-quality voice and install the languages you want Delfina to speak. Delfina automatically selects a matching installed voice. If a language voice is missing, Android may fall back to its default voice. A particular female voice cannot be guaranteed because the Android TTS engine controls which voices are available.
+
 ## Next engineering milestones
 
 1. Add a true on-device LLM runtime and a downloadable, license-checked model profile.
