@@ -56,32 +56,38 @@ class MainActivity : ComponentActivity() {
                 tts?.language = Locale.forLanguageTag("en-IN")
             }
         }
-        setContent { MaterialTheme { DelfinaScreen(onSpeak = { text, endpoint, key -> speak(text, endpoint, key) }) } }
+        setContent { MaterialTheme { DelfinaScreen(onSpeak = { text, endpoint, speechEndpoint, key -> speak(text, endpoint, speechEndpoint, key) }) } }
     }
 
-    private fun speak(text: String, chatEndpoint: String, apiKey: String) {
+    private fun speak(text: String, chatEndpoint: String, speechEndpoint: String, apiKey: String) {
         if (text.isBlank()) return
         lifecycleScope.launch {
             val audio = if (chatEndpoint.isNotBlank() && apiKey.isNotBlank()) {
-                withContext(Dispatchers.IO) { OnlineSpeech.synthesize(chatEndpoint, apiKey, text) }
+                withContext(Dispatchers.IO) { OnlineSpeech.synthesize(chatEndpoint, speechEndpoint, apiKey, text) }
             } else null
             if (audio != null) {
                 tts?.stop()
                 activePlayer?.release()
-                val audioFile = File(cacheDir, "delfina_reply.mp3")
-                audioFile.writeBytes(audio)
-                val player = MediaPlayer()
-                activePlayer = player
-                player.setDataSource(audioFile.absolutePath)
-                player.setOnPreparedListener { it.start() }
-                player.setOnCompletionListener { it.release(); if (activePlayer === it) activePlayer = null }
-                player.setOnErrorListener { mp, _, _ ->
-                    mp.release()
-                    if (activePlayer === mp) activePlayer = null
+                try {
+                    val audioFile = File(cacheDir, "delfina_reply.mp3")
+                    audioFile.writeBytes(audio)
+                    val player = MediaPlayer()
+                    activePlayer = player
+                    player.setDataSource(audioFile.absolutePath)
+                    player.setOnPreparedListener { it.start() }
+                    player.setOnCompletionListener { it.release(); if (activePlayer === it) activePlayer = null }
+                    player.setOnErrorListener { mp, _, _ ->
+                        mp.release()
+                        if (activePlayer === mp) activePlayer = null
+                        speakLocal(text)
+                        true
+                    }
+                    player.prepareAsync()
+                } catch (_: Exception) {
+                    activePlayer?.release()
+                    activePlayer = null
                     speakLocal(text)
-                    true
                 }
-                player.prepareAsync()
             } else {
                 speakLocal(text)
             }
@@ -144,11 +150,12 @@ private data class ChatMessage(val text: String, val fromUser: Boolean)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DelfinaScreen(onSpeak: (String, String, String) -> Unit) {
+private fun DelfinaScreen(onSpeak: (String, String, String, String) -> Unit) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("delfina", android.content.Context.MODE_PRIVATE) }
     var endpoint by remember { mutableStateOf(prefs.getString("endpoint", "") ?: "") }
     var model by remember { mutableStateOf(prefs.getString("model", "gpt-4o-mini") ?: "gpt-4o-mini") }
+    var speechEndpoint by remember { mutableStateOf(prefs.getString("speech_endpoint", "") ?: "") }
     var apiKey by remember { mutableStateOf(prefs.getString("api_key", "") ?: "") }
     var showSettings by remember { mutableStateOf(false) }
     var input by remember { mutableStateOf("") }
@@ -179,7 +186,7 @@ private fun DelfinaScreen(onSpeak: (String, String, String) -> Unit) {
             val reply = onlineReply ?: offlineReply(prompt)
             messages.add(ChatMessage(reply, false))
             status = if (onlineReply != null) "Online AI · language-matched voice" else "Offline fallback · language-matched system voice"
-            onSpeak(reply, endpoint.trim(), apiKey.trim())
+            onSpeak(reply, endpoint.trim(), speechEndpoint.trim(), apiKey.trim())
             busy = false
         }
     }
@@ -239,15 +246,17 @@ private fun DelfinaScreen(onSpeak: (String, String, String) -> Unit) {
             title = { Text("Online brain settings") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Chat endpoint powers online answers. If it supports OpenAI audio/speech, Delfina also tries a natural neural voice (Shimmer); otherwise she automatically uses your phone voice offline.")
+                    Text("Chat endpoint powers online answers. Speech endpoint is optional: use an OpenAI-compatible /v1/audio/speech URL for neural voice. Leave blank to derive it from a /chat/completions URL. Offline speech uses your selected Android TTS engine; install an offline neural engine and voice for richer speech without internet.")
                     OutlinedTextField(endpoint, { endpoint = it }, label = { Text("API endpoint URL") }, singleLine = true)
-                    OutlinedTextField(model, { model = it }, label = { Text("Model") }, singleLine = true)
+                    OutlinedTextField(model, { model = it }, label = { Text("Chat model") }, singleLine = true)
+                    OutlinedTextField(speechEndpoint, { speechEndpoint = it }, label = { Text("Speech endpoint (optional)") }, singleLine = true)
                     OutlinedTextField(apiKey, { apiKey = it }, label = { Text("API key") }, singleLine = true)
                 }
             },
             confirmButton = {
                 TextButton(onClick = {
                     prefs.edit().putString("endpoint", endpoint.trim()).putString("model", model.trim())
+                        .putString("speech_endpoint", speechEndpoint.trim())
                         .putString("api_key", apiKey.trim()).apply()
                     showSettings = false
                     status = if (endpoint.isNotBlank() && apiKey.isNotBlank()) "Online configured · fallback enabled" else "Offline-ready · online mode is optional"
