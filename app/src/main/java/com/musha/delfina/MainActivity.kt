@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
+import android.speech.tts.Voice
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -39,17 +40,36 @@ import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     private var tts: TextToSpeech? = null
+    private var ttsReady = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         tts = TextToSpeech(this) { status ->
-            if (status == TextToSpeech.SUCCESS) tts?.language = Locale.getDefault()
+            ttsReady = status == TextToSpeech.SUCCESS
+            if (ttsReady) {
+                tts?.setSpeechRate(0.94f)
+                tts?.setPitch(1.04f)
+                tts?.language = Locale.forLanguageTag("en-IN")
+            }
         }
         setContent { MaterialTheme { DelfinaScreen(onSpeak = { speak(it) }) } }
     }
 
     private fun speak(text: String) {
-        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "delfina_reply")
+        val engine = tts ?: return
+        if (!ttsReady || text.isBlank()) return
+        val locale = localeForText(text)
+        val matching = engine.voices.orEmpty().filter { it.locale.language == locale.language }
+        val selected = matching.sortedWith(
+            compareByDescending<Voice> { !it.isNetworkConnectionRequired }
+                .thenByDescending { it.quality }
+                .thenByDescending { it.name.contains("female", ignoreCase = true) ||
+                    it.name.contains("woman", ignoreCase = true) }
+        ).firstOrNull()
+        if (selected != null) engine.voice = selected else engine.setLanguage(locale)
+        engine.setSpeechRate(0.94f)
+        engine.setPitch(1.04f)
+        engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, "delfina_reply")
     }
 
     override fun onDestroy() {
@@ -57,6 +77,32 @@ class MainActivity : ComponentActivity() {
         tts?.shutdown()
         super.onDestroy()
     }
+}
+
+/** Infer a speech locale from the dominant writing system in the reply. */
+private fun localeForText(text: String): Locale {
+    val letters = text.codePoints().toArray().filter { Character.isLetter(it) }
+    if (letters.isEmpty()) return Locale.forLanguageTag("en-IN")
+    val block = letters.groupingBy { Character.UnicodeBlock.of(it) }
+        .eachCount().maxByOrNull { it.value }?.key
+    val tag = when (block) {
+        Character.UnicodeBlock.DEVANAGARI -> "hi-IN"
+        Character.UnicodeBlock.ARABIC -> "ur-PK"
+        Character.UnicodeBlock.BENGALI -> "bn-IN"
+        Character.UnicodeBlock.TAMIL -> "ta-IN"
+        Character.UnicodeBlock.TELUGU -> "te-IN"
+        Character.UnicodeBlock.KANNADA -> "kn-IN"
+        Character.UnicodeBlock.MALAYALAM -> "ml-IN"
+        Character.UnicodeBlock.GUJARATI -> "gu-IN"
+        Character.UnicodeBlock.GURMUKHI -> "pa-IN"
+        Character.UnicodeBlock.THAI -> "th-TH"
+        Character.UnicodeBlock.HANGUL_SYLLABLES, Character.UnicodeBlock.HANGUL_JAMO -> "ko-KR"
+        Character.UnicodeBlock.HIRAGANA, Character.UnicodeBlock.KATAKANA -> "ja-JP"
+        Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS -> "zh-CN"
+        Character.UnicodeBlock.CYRILLIC -> "ru-RU"
+        else -> "en-IN"
+    }
+    return Locale.forLanguageTag(tag)
 }
 
 private data class ChatMessage(val text: String, val fromUser: Boolean)
@@ -72,8 +118,8 @@ private fun DelfinaScreen(onSpeak: (String) -> Unit) {
     var showSettings by remember { mutableStateOf(false) }
     var input by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf("Offline-ready · online mode is optional") }
-    val messages = remember { mutableStateListOf(ChatMessage("Hi, I'm Delfina. You can talk or type to me. I'll use the online brain when configured, and switch to simple offline replies when it isn't available.", false)) }
+    var status by remember { mutableStateOf("Voice follows reply language · offline voice when installed") }
+    val messages = remember { mutableStateListOf(ChatMessage("Hi, I'm Delfina. I'll speak in the language I reply in. For the most natural voice, install high-quality voices for your languages in your phone's Text-to-speech settings.", false)) }
     val scope = rememberCoroutineScope()
 
     val speechLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -97,7 +143,7 @@ private fun DelfinaScreen(onSpeak: (String) -> Unit) {
             } else null
             val reply = onlineReply ?: offlineReply(prompt)
             messages.add(ChatMessage(reply, false))
-            status = if (onlineReply != null) "Online · connected" else "Offline mode · local fallback"
+            status = if (onlineReply != null) "Online AI · language-matched voice" else "Offline fallback · language-matched system voice"
             onSpeak(reply)
             busy = false
         }
@@ -209,7 +255,7 @@ private fun requestOnline(
         }
         val allMessages = JSONArray()
         allMessages.put(JSONObject().put("role", "system").put("content",
-            "You are Delfina, a warm, perceptive phone companion. Speak naturally and concisely. Mirror the user's language. Never claim to be human or sentient."))
+            "You are Delfina, a warm, young-sounding, emotionally perceptive assistant. Write like a natural conversational companion, with short spoken sentences, gentle warmth, varied rhythm, and the same language and script the user uses. Match the user's language and code-switch naturally. Avoid robotic introductions and repetitive greetings. Never claim to be human or sentient."))
         history.forEach { allMessages.put(JSONObject().put("role", if (it.fromUser) "user" else "assistant").put("content", it.text)) }
         allMessages.put(JSONObject().put("role", "user").put("content", prompt))
         val body = JSONObject().put("model", model).put("messages", allMessages).put("temperature", 0.7)
