@@ -111,6 +111,8 @@ private fun DelfinaScreen(
     var connected by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("Online voice · tap the microphone to connect") }
+    val diagnostics = remember { context.getSharedPreferences("delfina_diagnostics", android.content.Context.MODE_PRIVATE) }
+    var crashReport by remember { mutableStateOf(diagnostics.getString("last_crash", null)) }
     val lines = remember { mutableStateListOf<VoiceLine>() }
 
     fun handleEvent(event: JSONObject) {
@@ -232,6 +234,22 @@ private fun DelfinaScreen(
         }
     }
 
+    if (crashReport != null) {
+        AlertDialog(
+            onDismissRequest = { crashReport = null },
+            title = { Text("Delfina crash report") },
+            text = { Text(crashReport.orEmpty(), maxLines = 10, style = MaterialTheme.typography.bodySmall) },
+            confirmButton = {
+                TextButton(onClick = {
+                    val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                    clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Delfina crash", crashReport.orEmpty()))
+                }) { Text("Copy report") }
+            },
+            dismissButton = {
+                TextButton(onClick = { diagnostics.edit().remove("last_crash").apply(); crashReport = null }) { Text("Close") }
+            }
+        )
+    }
     if (showSettings) {
         AlertDialog(
             onDismissRequest = { showSettings = false },
