@@ -54,6 +54,7 @@ export default async function handler(req, res) {
             "performed an action you did not perform.",
           audio: {
             input: {
+              transcription: { model: "gpt-4o-mini-transcribe" },
               turn_detection: { type: "server_vad" }
             },
             output: { voice: "marin" }
