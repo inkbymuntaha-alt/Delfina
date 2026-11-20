@@ -1,246 +1,219 @@
 package com.musha.delfina
 
 import android.Manifest
-import android.content.Intent
 import android.content.pm.PackageManager
-import android.media.MediaPlayer
-import java.io.File
 import android.os.Bundle
-import android.speech.RecognizerIntent
-import android.speech.SpeechRecognizer
-import android.speech.tts.TextToSpeech
-import android.speech.tts.Voice
 import androidx.activity.ComponentActivity
-import androidx.lifecycle.lifecycleScope
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import kotlinx.coroutines.Dispatchers
+import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import org.json.JSONArray
 import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
-import java.util.Locale
 
 class MainActivity : ComponentActivity() {
-    private var tts: TextToSpeech? = null
-    private var ttsReady = false
-    private var activePlayer: MediaPlayer? = null
+    private var voiceClient: RealtimeVoiceClient? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        tts = TextToSpeech(this) { status ->
-            ttsReady = status == TextToSpeech.SUCCESS
-            if (ttsReady) {
-                tts?.setSpeechRate(0.94f)
-                tts?.setPitch(1.04f)
-                tts?.language = Locale.forLanguageTag("en-IN")
+        setContent {
+            MaterialTheme {
+                DelfinaScreen(
+                    onConnect = { backend, code, status, event, failure ->
+                        connectVoice(backend, code, status, event, failure)
+                    },
+                    onDisconnect = { disconnectVoice() }
+                )
             }
         }
-        setContent { MaterialTheme { DelfinaScreen(onSpeak = { text, endpoint, speechEndpoint, key -> speak(text, endpoint, speechEndpoint, key) }) } }
     }
 
-    private fun speak(text: String, chatEndpoint: String, speechEndpoint: String, apiKey: String) {
-        if (text.isBlank()) return
+    private fun connectVoice(
+        backend: String,
+        code: String,
+        onStatus: (String) -> Unit,
+        onEvent: (JSONObject) -> Unit,
+        onFailure: (String) -> Unit
+    ) {
+        if (voiceClient != null) return
+        val client = RealtimeVoiceClient(this, backend, code, object : RealtimeVoiceClient.Listener {
+            override fun onStatus(message: String) = runOnUiThread { onStatus(message) }
+            override fun onEvent(event: JSONObject) = runOnUiThread { onEvent(event) }
+            override fun onFailure(message: String) = runOnUiThread { onFailure(message) }
+        })
+        voiceClient = client
         lifecycleScope.launch {
-            val audio = if (chatEndpoint.isNotBlank() && apiKey.isNotBlank()) {
-                withContext(Dispatchers.IO) { OnlineSpeech.synthesize(chatEndpoint, speechEndpoint, apiKey, text) }
-            } else null
-            if (audio != null) {
-                tts?.stop()
-                activePlayer?.release()
-                try {
-                    val audioFile = File(cacheDir, "delfina_reply.mp3")
-                    audioFile.writeBytes(audio)
-                    val player = MediaPlayer()
-                    activePlayer = player
-                    player.setDataSource(audioFile.absolutePath)
-                    player.setOnPreparedListener { it.start() }
-                    player.setOnCompletionListener { it.release(); if (activePlayer === it) activePlayer = null }
-                    player.setOnErrorListener { mp, _, _ ->
-                        mp.release()
-                        if (activePlayer === mp) activePlayer = null
-                        speakLocal(text)
-                        true
-                    }
-                    player.prepareAsync()
-                } catch (_: Exception) {
-                    activePlayer?.release()
-                    activePlayer = null
-                    speakLocal(text)
+            try {
+                client.connect()
+            } catch (e: Exception) {
+                runOnUiThread {
+                    onFailure(e.message ?: "Could not connect to Realtime.")
+                    disconnectVoice()
                 }
-            } else {
-                speakLocal(text)
             }
         }
     }
 
-    private fun speakLocal(text: String) {
-        val engine = tts ?: return
-        if (!ttsReady || text.isBlank()) return
-        val locale = localeForText(text)
-        val matching = engine.voices.orEmpty().filter { it.locale.language == locale.language }
-        val selected = matching.sortedWith(
-            compareByDescending<Voice> { !it.isNetworkConnectionRequired }
-                .thenByDescending { it.quality }
-                .thenByDescending { it.name.contains("female", ignoreCase = true) ||
-                    it.name.contains("woman", ignoreCase = true) }
-        ).firstOrNull()
-        if (selected != null) engine.voice = selected else engine.setLanguage(locale)
-        engine.setSpeechRate(0.94f)
-        engine.setPitch(1.04f)
-        engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, "delfina_reply")
+    private fun disconnectVoice() {
+        voiceClient?.disconnect()
+        voiceClient = null
     }
 
     override fun onDestroy() {
-        activePlayer?.release()
-        activePlayer = null
-        tts?.stop()
-        tts?.shutdown()
+        disconnectVoice()
         super.onDestroy()
     }
 }
 
-/** Infer a speech locale from the dominant writing system in the reply. */
-private fun localeForText(text: String): Locale {
-    val letters = text.codePoints().toArray().filter { Character.isLetter(it) }
-    if (letters.isEmpty()) return Locale.forLanguageTag("en-IN")
-    val block = letters.groupingBy { Character.UnicodeBlock.of(it) }
-        .eachCount().maxByOrNull { it.value }?.key
-    val tag = when (block) {
-        Character.UnicodeBlock.DEVANAGARI -> "hi-IN"
-        Character.UnicodeBlock.ARABIC -> "ur-PK"
-        Character.UnicodeBlock.BENGALI -> "bn-IN"
-        Character.UnicodeBlock.TAMIL -> "ta-IN"
-        Character.UnicodeBlock.TELUGU -> "te-IN"
-        Character.UnicodeBlock.KANNADA -> "kn-IN"
-        Character.UnicodeBlock.MALAYALAM -> "ml-IN"
-        Character.UnicodeBlock.GUJARATI -> "gu-IN"
-        Character.UnicodeBlock.GURMUKHI -> "pa-IN"
-        Character.UnicodeBlock.THAI -> "th-TH"
-        Character.UnicodeBlock.HANGUL_SYLLABLES, Character.UnicodeBlock.HANGUL_JAMO -> "ko-KR"
-        Character.UnicodeBlock.HIRAGANA, Character.UnicodeBlock.KATAKANA -> "ja-JP"
-        Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS -> "zh-CN"
-        Character.UnicodeBlock.CYRILLIC -> "ru-RU"
-        else -> "en-IN"
-    }
-    return Locale.forLanguageTag(tag)
-}
-
-private data class ChatMessage(val text: String, val fromUser: Boolean)
-private data class OnlineResult(val reply: String?, val error: String? = null)
+private data class VoiceLine(val text: String, val fromUser: Boolean)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DelfinaScreen(onSpeak: (String, String, String, String) -> Unit) {
-    val context = LocalContext.current
+private fun DelfinaScreen(
+    onConnect: (String, String, (String) -> Unit, (JSONObject) -> Unit, (String) -> Unit) -> Unit,
+    onDisconnect: () -> Unit
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     val prefs = remember { context.getSharedPreferences("delfina", android.content.Context.MODE_PRIVATE) }
-    var endpoint by remember { mutableStateOf(prefs.getString("endpoint", "") ?: "") }
-    var model by remember { mutableStateOf(prefs.getString("model", "gpt-4o-mini") ?: "gpt-4o-mini") }
-    var speechEndpoint by remember { mutableStateOf(prefs.getString("speech_endpoint", "") ?: "") }
-    var apiKey by remember { mutableStateOf(prefs.getString("api_key", "") ?: "") }
+    var backend by remember { mutableStateOf(prefs.getString("realtime_backend", "https://delfina-9sjk5h6cx-inkbymuntaha.vercel.app") ?: "") }
+    var accessCode by remember { mutableStateOf(prefs.getString("realtime_access_code", "") ?: "") }
     var showSettings by remember { mutableStateOf(false) }
-    var input by remember { mutableStateOf("") }
+    var connected by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf("Voice follows reply language · offline voice when installed") }
-    val messages = remember { mutableStateListOf(ChatMessage("Hi, I'm Delfina. I'll speak in the language I reply in. For the most natural voice, install high-quality voices for your languages in your phone's Text-to-speech settings.", false)) }
-    val scope = rememberCoroutineScope()
+    var status by remember { mutableStateOf("Online voice · tap the microphone to connect") }
+    val lines = remember { mutableStateListOf<VoiceLine>() }
 
-    val speechLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        val spoken = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
-        if (!spoken.isNullOrBlank()) input = spoken
-    }
-    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) launchSpeech(speechLauncher, context)
-        else status = "Microphone permission was not granted."
-    }
-
-    fun sendMessage() {
-        val prompt = input.trim()
-        if (prompt.isEmpty() || busy) return
-        messages.add(ChatMessage(prompt, true))
-        input = ""
-        busy = true
-        scope.launch {
-            val onlineResult = if (endpoint.isNotBlank() && apiKey.isNotBlank()) {
-                withContext(Dispatchers.IO) { requestOnline(endpoint, model, apiKey, messages.dropLast(1).takeLast(12), prompt) }
-            } else OnlineResult(null, "Add your API endpoint and API key in Settings, then Save.")
-            val onlineReply = onlineResult.reply
-            val reply = onlineReply ?: offlineReply(prompt)
-            if (onlineReply == null && onlineResult.error != null) {
-                messages.add(ChatMessage("Online diagnostic: ${onlineResult.error}", false))
-            }
-            messages.add(ChatMessage(reply, false))
-            status = if (onlineReply != null) "Online AI · language-matched voice" else "API error · see diagnostic message · offline fallback"
-            onSpeak(reply, endpoint.trim(), speechEndpoint.trim(), apiKey.trim())
-            busy = false
+    fun handleEvent(event: JSONObject) {
+        val type = event.optString("type")
+        val text = when (type) {
+            "input_audio_transcription.completed" -> event.optString("transcript")
+            "response.output_audio_transcript.done" -> event.optString("transcript")
+            "response.output_text.done" -> event.optJSONObject("text")?.optString("text").orEmpty()
+            else -> ""
+        }.trim()
+        if (text.isNotBlank()) {
+            val fromUser = type == "input_audio_transcription.completed"
+            lines.add(VoiceLine(text, fromUser))
         }
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            busy = true
+            status = "Starting secure voice session…"
+            onConnect(
+                backend.trim(), accessCode.trim(),
+                { message -> status = message; if (message.startsWith("Connected")) { connected = true; busy = false } },
+                { event -> handleEvent(event) },
+                { message -> status = message; connected = false; busy = false }
+            )
+        } else status = "Microphone permission is required for voice chat."
     }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Column { Text("Delfina", fontWeight = FontWeight.Bold); Text(status, style = MaterialTheme.typography.labelSmall) } },
-                actions = { TextButton(onClick = { showSettings = true }) { Text("Settings") } }
-            )
-        },
-        bottomBar = {
-            Surface(tonalElevation = 3.dp) {
-                Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = {
-                        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                            launchSpeech(speechLauncher, context)
-                        } else permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                    }) { Icon(Icons.Default.Mic, contentDescription = "Speak") }
-                    OutlinedTextField(
-                        value = input, onValueChange = { input = it },
-                        modifier = Modifier.weight(1f), placeholder = { Text("Message Delfina…") },
-                        maxLines = 4
-                    )
-                    IconButton(onClick = { sendMessage() }, enabled = !busy && input.isNotBlank()) {
-                        Icon(Icons.Default.Send, contentDescription = "Send")
+                title = {
+                    Column {
+                        Text("Delfina", fontWeight = FontWeight.Bold)
+                        Text(status, style = MaterialTheme.typography.labelSmall, maxLines = 2)
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { showSettings = true }) {
+                        Icon(Icons.Default.Settings, contentDescription = "Settings")
                     }
                 }
-            }
+            )
         }
     ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).background(MaterialTheme.colorScheme.background)) {
-            LazyColumn(
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+        Column(
+            modifier = Modifier.fillMaxSize().padding(padding).padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Spacer(Modifier.height(24.dp))
+            Surface(
+                modifier = Modifier.size(190.dp),
+                shape = CircleShape,
+                color = if (connected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
             ) {
-                items(messages) { message ->
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = if (message.fromUser) Arrangement.End else Arrangement.Start) {
-                        Surface(
-                            color = if (message.fromUser) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.secondaryContainer,
-                            shape = RoundedCornerShape(18.dp),
-                            modifier = Modifier.widthIn(max = 320.dp)
-                        ) {
-                            Text(message.text, Modifier.padding(14.dp), color = MaterialTheme.colorScheme.onSecondaryContainer)
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(Icons.Default.Mic, contentDescription = null, modifier = Modifier.size(88.dp), tint = MaterialTheme.colorScheme.primary)
+                }
+            }
+            Spacer(Modifier.height(18.dp))
+            Text(if (connected) "I'm listening" else "Talk to Delfina", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+            Text("Live online voice · natural language matching", style = MaterialTheme.typography.bodyMedium)
+            Spacer(Modifier.height(18.dp))
+            Button(
+                onClick = {
+                    if (connected || busy) {
+                        onDisconnect()
+                        connected = false
+                        busy = false
+                        status = "Voice session ended"
+                    } else if (backend.isBlank() || accessCode.isBlank()) {
+                        showSettings = true
+                    } else if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                        busy = true
+                        status = "Starting secure voice session…"
+                        onConnect(
+                            backend.trim(), accessCode.trim(),
+                            { message -> status = message; if (message.startsWith("Connected")) { connected = true; busy = false } },
+                            { event -> handleEvent(event) },
+                            { message -> status = message; connected = false; busy = false }
+                        )
+                    } else permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                },
+                enabled = !busy || connected,
+                modifier = Modifier.fillMaxWidth().height(54.dp)
+            ) {
+                if (connected || busy) Icon(Icons.Default.Stop, contentDescription = null)
+                else Icon(Icons.Default.Mic, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text(if (connected || busy) "End voice session" else "Start talking")
+            }
+            if (busy) {
+                Spacer(Modifier.height(12.dp))
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+            }
+            Spacer(Modifier.height(20.dp))
+            Text("Conversation", style = MaterialTheme.typography.titleMedium, modifier = Modifier.align(Alignment.Start))
+            Spacer(Modifier.height(8.dp))
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth().weight(1f),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(lines) { line ->
+                    Surface(
+                        color = if (line.fromUser) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.secondaryContainer,
+                        shape = MaterialTheme.shapes.large,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(Modifier.padding(12.dp)) {
+                            Text(if (line.fromUser) "You" else "Delfina", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                            Text(line.text)
                         }
                     }
                 }
-                if (busy) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
             }
         }
     }
@@ -248,110 +221,30 @@ private fun DelfinaScreen(onSpeak: (String, String, String, String) -> Unit) {
     if (showSettings) {
         AlertDialog(
             onDismissRequest = { showSettings = false },
-            title = { Text("Online brain settings") },
+            title = { Text("Online voice settings") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Chat endpoint powers online answers. Speech endpoint is optional: use an OpenAI-compatible /v1/audio/speech URL for neural voice. Leave blank to derive it from a /chat/completions URL. Offline speech uses your selected Android TTS engine; install an offline neural engine and voice for richer speech without internet.")
-                    OutlinedTextField(endpoint, { endpoint = it }, label = { Text("API endpoint URL") }, singleLine = true)
-                    OutlinedTextField(model, { model = it }, label = { Text("Chat model") }, singleLine = true)
-                    OutlinedTextField(speechEndpoint, { speechEndpoint = it }, label = { Text("Speech endpoint (optional)") }, singleLine = true)
-                    OutlinedTextField(apiKey, { apiKey = it }, label = { Text("API key") }, singleLine = true)
-                    TextButton(onClick = {
-                        try { context.startActivity(Intent("com.android.settings.TTS_SETTINGS")) }
-                        catch (_: Exception) { context.startActivity(Intent("android.settings.SETTINGS")) }
-                    }) { Text("Configure offline voice engine") }
-                    TextButton(onClick = {
-                        context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://k2-fsa.github.io/sherpa/onnx/tts/apk-engine.html")))
-                    }) { Text("Get offline neural voice models") }
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Use your deployed Vercel backend URL and the private access code you created in Vercel. Your OpenAI API key stays on the server.")
+                    OutlinedTextField(backend, { backend = it }, label = { Text("Vercel backend URL") }, singleLine = true)
+                    OutlinedTextField(
+                        accessCode, { accessCode = it },
+                        label = { Text("Delfina access code") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation()
+                    )
                 }
             },
             confirmButton = {
                 TextButton(onClick = {
-                    prefs.edit().putString("endpoint", endpoint.trim()).putString("model", model.trim())
-                        .putString("speech_endpoint", speechEndpoint.trim())
-                        .putString("api_key", apiKey.trim()).apply()
+                    prefs.edit()
+                        .putString("realtime_backend", backend.trim())
+                        .putString("realtime_access_code", accessCode.trim())
+                        .apply()
                     showSettings = false
-                    status = if (endpoint.isNotBlank() && apiKey.isNotBlank()) "Online configured · fallback enabled" else "Offline-ready · online mode is optional"
+                    status = "Settings saved · ready to connect"
                 }) { Text("Save") }
             },
             dismissButton = { TextButton(onClick = { showSettings = false }) { Text("Cancel") } }
         )
-    }
-}
-
-private fun launchSpeech(
-    launcher: androidx.activity.result.ActivityResultLauncher<Intent>,
-    context: android.content.Context
-) {
-    if (!SpeechRecognizer.isRecognitionAvailable(context)) return
-    val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-        putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
-        putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-    }
-    launcher.launch(intent)
-}
-
-private fun requestOnline(
-    endpoint: String,
-    model: String,
-    key: String,
-    history: List<ChatMessage>,
-    prompt: String
-): OnlineResult {
-    return try {
-        val url = URL(endpoint)
-        val connection = (url.openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"
-            connectTimeout = 10000
-            readTimeout = 20000
-            doOutput = true
-            setRequestProperty("Content-Type", "application/json")
-            setRequestProperty("Authorization", "Bearer $key")
-        }
-        val allMessages = JSONArray()
-        allMessages.put(JSONObject().put("role", "system").put("content",
-            "You are Delfina, a warm, young-sounding, emotionally perceptive assistant. Write like a natural conversational companion, with short spoken sentences, gentle warmth, varied rhythm, and the same language and script the user uses. Match the user's language and code-switch naturally. Avoid robotic introductions and repetitive greetings. Never claim to be human or sentient."))
-        history.forEach { allMessages.put(JSONObject().put("role", if (it.fromUser) "user" else "assistant").put("content", it.text)) }
-        allMessages.put(JSONObject().put("role", "user").put("content", prompt))
-        val body = JSONObject().put("model", model).put("messages", allMessages).put("temperature", 0.7)
-        connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
-        val code = connection.responseCode
-        val stream = if (code in 200..299) connection.inputStream else connection.errorStream
-        val response = stream.bufferedReader().use { it.readText() }
-        connection.disconnect()
-        if (code !in 200..299) {
-            val errorJson = try { JSONObject(response).optJSONObject("error") } catch (_: Exception) { null }
-            val errorCode = errorJson?.optString("code").orEmpty().ifBlank { errorJson?.optString("type").orEmpty() }
-            val errorMessage = errorJson?.optString("message").orEmpty().ifBlank { response.take(500) }
-            val retryAfter = connection.getHeaderField("Retry-After")?.let { " · retry after $it s" }.orEmpty()
-            val detail = buildString {
-                append("HTTP $code")
-                if (errorCode.isNotBlank() && errorCode != "null") append(" · $errorCode")
-                append(" · ")
-                append(errorMessage.take(350))
-                append(retryAfter)
-            }
-            OnlineResult(null, detail)
-        } else {
-            val answer = JSONObject(response).getJSONArray("choices")
-                .getJSONObject(0).getJSONObject("message").getString("content").trim()
-            if (answer.isBlank()) OnlineResult(null, "The API returned an empty answer.")
-            else OnlineResult(answer)
-        }
-    } catch (e: Exception) {
-        OnlineResult(null, (e.message ?: e.javaClass.simpleName).take(180))
-    }
-}
-
-private fun offlineReply(text: String): String {
-    val q = text.lowercase(Locale.ROOT)
-    return when {
-        q.matches(Regex(".*\\b(hi|hello|hey|namaste|नमस्ते)\\b.*")) -> "Hey! I'm here with you. What's on your mind?"
-        q.contains("time") -> "I can help with that, but clock access is coming in a later update."
-        q.contains("your name") || q.contains("who are you") -> "I'm Delfina, your on-device voice companion."
-        q.contains("thank") -> "You're very welcome. I'm glad I could help."
-        q.contains("bye") -> "See you soon. I'll be right here when you need me."
-        else -> "I'm offline right now, so my full language model isn't available yet. I can still handle simple greetings and basic commands. Connect an online endpoint in Settings for richer replies."
     }
 }
