@@ -186,8 +186,11 @@ private fun DelfinaScreen(onSpeak: (String, String, String, String) -> Unit) {
             } else OnlineResult(null, "Add your API endpoint and API key in Settings, then Save.")
             val onlineReply = onlineResult.reply
             val reply = onlineReply ?: offlineReply(prompt)
+            if (onlineReply == null && onlineResult.error != null) {
+                messages.add(ChatMessage("Online diagnostic: ${onlineResult.error}", false))
+            }
             messages.add(ChatMessage(reply, false))
-            status = if (onlineReply != null) "Online AI · language-matched voice" else "Online failed: ${onlineResult.error ?: "unknown error"} · offline fallback"
+            status = if (onlineReply != null) "Online AI · language-matched voice" else "API error · see diagnostic message · offline fallback"
             onSpeak(reply, endpoint.trim(), speechEndpoint.trim(), apiKey.trim())
             busy = false
         }
@@ -318,7 +321,18 @@ private fun requestOnline(
         val response = stream.bufferedReader().use { it.readText() }
         connection.disconnect()
         if (code !in 200..299) {
-            OnlineResult(null, "HTTP $code: ${response.take(180)}")
+            val errorJson = try { JSONObject(response).optJSONObject("error") } catch (_: Exception) { null }
+            val errorCode = errorJson?.optString("code").orEmpty().ifBlank { errorJson?.optString("type").orEmpty() }
+            val errorMessage = errorJson?.optString("message").orEmpty().ifBlank { response.take(500) }
+            val retryAfter = connection.getHeaderField("Retry-After")?.let { " · retry after $it s" }.orEmpty()
+            val detail = buildString {
+                append("HTTP $code")
+                if (errorCode.isNotBlank() && errorCode != "null") append(" · $errorCode")
+                append(" · ")
+                append(errorMessage.take(350))
+                append(retryAfter)
+            }
+            OnlineResult(null, detail)
         } else {
             val answer = JSONObject(response).getJSONArray("choices")
                 .getJSONObject(0).getJSONObject("message").getString("content").trim()
