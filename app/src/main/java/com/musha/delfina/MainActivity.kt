@@ -3,6 +3,7 @@ package com.musha.delfina
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -31,6 +32,7 @@ class MainActivity : ComponentActivity() {
     private var voiceClient: RealtimeVoiceClient? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        installCrashCapture()
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme {
@@ -41,6 +43,18 @@ class MainActivity : ComponentActivity() {
                     onDisconnect = { disconnectVoice() }
                 )
             }
+        }
+    }
+
+    private fun installCrashCapture() {
+        val previous = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, error ->
+            runCatching {
+                getSharedPreferences("delfina_diagnostics", MODE_PRIVATE).edit()
+                    .putString("last_crash", Log.getStackTraceString(error).take(10000))
+                    .commit()
+            }
+            previous?.uncaughtException(thread, error)
         }
     }
 
