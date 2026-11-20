@@ -146,7 +146,7 @@ private data class ChatMessage(val text: String, val fromUser: Boolean)
 @Composable
 private fun DelfinaScreen(onSpeak: (String, String, String) -> Unit) {
     val context = LocalContext.current
-    val prefs = remember { context.getSharedPreferences("delfina", ComponentActivity.MODE_PRIVATE) }
+    val prefs = remember { context.getSharedPreferences("delfina", android.content.Context.MODE_PRIVATE) }
     var endpoint by remember { mutableStateOf(prefs.getString("endpoint", "") ?: "") }
     var model by remember { mutableStateOf(prefs.getString("model", "gpt-4o-mini") ?: "gpt-4o-mini") }
     var apiKey by remember { mutableStateOf(prefs.getString("api_key", "") ?: "") }
